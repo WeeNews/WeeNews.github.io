@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" >
+
+<title>Linux进程、线程及调度算法 | WeeNews&#39;s blog</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+<link rel="shortcut icon" href="https://weenews.github.io/favicon.ico?v=1597567001528">
+<link rel="stylesheet" href="https://weenews.github.io/styles/main.css">
+
+
+
+<link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+
+
+
+    <meta name="description" content="进程与线程
+进程是资源分配的最小单位，线程是调度的最小单位
+进程控制块PCB
+每一个进程都有各自的PCB（在Linux下即为task_struct），其描述了进程的资源
+
+
+1.读Linux内核以及相关的资料的时候，时刻要清醒地认识到它说的..." />
+    <meta name="keywords" content="" />
+  </head>
+  <body>
+    <div id="app" class="main">
+
+      <div class="sidebar" :class="{ 'full-height': menuVisible }">
+  <div class="top-container" data-aos="fade-right">
+    <div class="top-header-container">
+      <a class="site-title-container" href="https://weenews.github.io">
+        <img src="https://weenews.github.io/images/avatar.png?v=1597567001528" class="site-logo">
+        <h1 class="site-title">WeeNews&#39;s blog</h1>
+      </a>
+      <div class="menu-btn" @click="menuVisible = !menuVisible">
+        <div class="line"></div>
+      </div>
+    </div>
+    <div>
+      
+        
+          <a href="/" class="site-nav">
+            首页
+          </a>
+        
+      
+        
+          <a href="/archives" class="site-nav">
+            归档
+          </a>
+        
+      
+        
+          <a href="/tags" class="site-nav">
+            标签
+          </a>
+        
+      
+        
+          <a href="/post/about" class="site-nav">
+            关于
+          </a>
+        
+      
+    </div>
+  </div>
+  <div class="bottom-container" data-aos="flip-up" data-aos-offset="0">
+    <div class="social-container">
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    </div>
+    <div class="site-description">
+      温故而知新
+    </div>
+    <div class="site-footer">
+      Powered by <a href="https://github.com/getgridea/gridea" target="_blank">Gridea</a> | <a class="rss" href="https://weenews.github.io/atom.xml" target="_blank">RSS</a>
+    </div>
+  </div>
+</div>
+
+
+      <div class="main-container">
+        <div class="content-container" data-aos="fade-up">
+          <div class="post-detail">
+            <h2 class="post-title">Linux进程、线程及调度算法</h2>
+            <div class="post-date">2020-08-16</div>
+            
+            <div class="post-content" v-pre>
+              <h1 id="进程与线程">进程与线程</h1>
+<p>进程是资源分配的最小单位，线程是调度的最小单位</p>
+<h2 id="进程控制块pcb">进程控制块PCB</h2>
+<p>每一个进程都有各自的PCB（在Linux下即为task_struct），<strong>其描述了进程的资源</strong></p>
+<figure data-type="image" tabindex="1"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200809213716021.png" alt="image-20200809213716021" loading="lazy"></figure>
+<blockquote>
+<p>1.读Linux内核以及相关的资料的时候，时刻要清醒地认识到它说的是内核态还是用户态的东西。</p>
+<p>2.一个用户态进程/线程在内核中都是用一个task_struct的实例描述的，这个有点类似设计模式里面的桥接模式(handle-body), 用户态看到的进程PID，线程TID都是handle, task_struct是body。</p>
+<p>3.C语言书里面讲的堆、栈大部分都是用户态的概念，用户态的堆、栈对应用户进程虚拟地址空间里的一个区域，栈向下增长，堆用malloc分配，向上增长。</p>
+<p>3.用户空间的堆栈，在task_struct-&gt;mm-&gt;vm_area里面描述，都是属于进程虚拟地址空间的一个区域。</p>
+<p>5.而内核态的栈在tsak_struct-&gt;stack里面描述，其底部是thread_info对象，thread_info可以用来快速获取task_struct对象。整个stack区域一般只有一个内存页(可配置)，32位机器也就是4KB。</p>
+<p>6.所以说，一个进程的内核栈，也是进程私有的，只是在task_struct-&gt;stack里面获取。</p>
+<p>7.内核态没有进程堆的概念，用kmalloc()分配内存，实际上是Linux内核统一管理的，一般用slab分配器，也就是一个内存缓存池，管理所有可以kmalloc()分配的内存。所以从原理上看，在Linux内核态，kmalloc分配的所有的内存，都是可以被所有运行在Linux内核态的task访问到的。</p>
+<p>内核在创建进程时，会同时创建task_struct和进程相应堆栈。每个进程都会有两个堆栈，一个用户栈，存在于用户空间，一个内核栈，存在于内核空间。当进程在用户空间运行时，CPU堆栈寄存器的内容是用户堆栈地址，使用用户栈。当进程在内核空间时，CPU堆栈寄存器的内容是内核栈地址空间，使用的是内核栈。</p>
+<p>当进程因为中断或系统调用进入内核时，进程使用的堆栈也需要从用户栈到内核栈。进程陷入内核态后，先把用户堆栈的地址保存到内核堆栈中，然后设置CPU堆栈寄存器为内核栈的地址，这样就完成了用户栈到内核栈的转换。</p>
+<p>当进程从内核态恢复到用户态时，把内核中保存的用户态堆栈的地址恢复到堆栈指针寄存器即可。这样就实现了内核栈到用户栈的转换。</p>
+<p>注意：陷入内核栈时，如何知道内核栈的地址呢？<br>
+进程由用户栈到内核栈转换时，进程的内核栈总是空的。每次从用户态陷入内核时，得到的内核栈都是空的，所以在进程陷入内核时，直接把内核栈顶地址给堆栈指针寄存器即可。（内核栈地址是固定的）</p>
+<h4 id="内核栈的作用">内核栈的作用</h4>
+<p>我个人的理解是：在陷入内核后，系统调用中也是存在函数调用和自动变量，这些都需要栈支持。用户空间的栈<strong>显然不安全</strong>，需要内核栈的支持。此外，内核栈同时用于保存一些系统调用前(用户态）的信息（如用户空间栈指针、系统调用参数）。</p>
+</blockquote>
+<h3 id="task_struct的管理">task_struct的管理</h3>
+<p>形成链表、树、哈希（pid -&gt; task_struct）以在适应不同场景，用空间换时间。</p>
+<h2 id="进程状态">进程状态</h2>
+<figure data-type="image" tabindex="2"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200809231549854.png" alt="image-20200809231549854" loading="lazy"></figure>
+<p><strong>内存泄漏</strong>：进程如果没有释放资源就挂了，那不叫内存泄漏，因为进程挂了，它的内存资源也会被自动回收，</p>
+<p>内存泄漏是指进程活着，且随着时间它使用的内存越来越多（由于某种原因不断的分配空间而没有释放）</p>
+<blockquote>
+<p>诊断：持续观察进程的内存使用情况，如果越来越多则说明由内存泄漏</p>
+</blockquote>
+<p><strong>cpulimit 原理</strong>：不断的停止和恢复进程的执行</p>
+<pre><code class="language-bash">cpulimit -l 10 -p 12296
+</code></pre>
+<h2 id="fork原理">fork原理</h2>
+<p>创建一个新的进程，就是使用fork()系统调用，所以要关注fork</p>
+<figure data-type="image" tabindex="3"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200809224618314.png" alt="image-20200809224618314" loading="lazy"></figure>
+<h3 id="fork-vfork-pthread_create">fork、vfork、pthread_create</h3>
+<img src="C:\Users\xwq\AppData\Roaming\Typora\typora-user-images\image-20200810211002993.png" alt="image-20200810211002993" style="zoom:100%;" />
+<p>fork、vfork、pthread_create的底层都是使用了clone，只不过clone的资源不同（实现上是指task_struct中的各成员）</p>
+<p><strong>程序的执行</strong>：加载时只是做了一个虚拟空间和可执行文件之间的映射，并没有实际分配物理内存，更没有从磁盘读取文件内容到内存。代码段，数据段，堆，栈等这时候都只是存在于虚拟空间。程序开始执行后，先访问虚拟空间的代码段，操作系统的内存管理单元（MMU）通过TLB和Page Table查找虚拟页面（Page）所对应的物理内存页框（Page Frame）时，发现还没有对应的物理页框，也就是发生了缺页中断（Page Fault），这时候操作系统才会分配物理内存，并将程序的可执行文件读入内存中，开始执行程序代码。堆栈中的内存也是在需要访问的时候，发生Page Fault，然后才分配物理内存。</p>
+<blockquote>
+<p>CLONE_PARENT  创建的子进程的父进程是调用者的父进程，新进程与创建它的进程成了“兄弟”而不是“父子”</p>
+<p>CLONE_FS      子进程与父进程共享相同的文件系统，包括root、当前目录、umask</p>
+<p>CLONE_FILES   子进程与父进程共享相同的文件描述符（file descriptor）表</p>
+<p>CLONE_NEWNS  在新的namespace启动子进程，namespace描述了进程的文件hierarchy</p>
+<p>CLONE_SIGHAND  子进程与父进程共享相同的信号处理（signal handler）表</p>
+<p>CLONE_PTRACE  若父进程被trace，子进程也被trace</p>
+<p>CLONE_VFORK   父进程被挂起，直至子进程释放虚拟内存资源</p>
+<p>CLONE_VM      子进程与父进程运行于相同的内存空间</p>
+<p>CLONE_PID     子进程在创建时PID与父进程一致</p>
+<p>CLONE_THREAD  Linux 2.4中增加以支持POSIX线程标准，子进程与父进程共享相同的线程群</p>
+</blockquote>
+<h3 id="fork-vs-vfork">fork  vs  vfork</h3>
+<p>在Linux中，两者的区别实际上已经很小了，fork()其实已经足够来替代vfork()了。vfork()相对于fork()是不需要拷贝page table entries，就是虚拟内存空间。fork()的写时拷贝指的是具体的内存数据被改时拷贝，而虚拟内存空间布局还是必须要拷贝的。而且vfork()也没有写时拷贝的负担，所以vfork()实际还是比fork()开销小。但是vfork()的子进程里不能访问/修改原来的数据，这是未定义行为。一般采用vfork()的子进程，都会紧接着执行execv启动一个全新的进程，该进程的进程空间与父进程完全独立不相干，所以不需要复制父进程资源空间。</p>
+<h3 id="pid与tgid">PID与TGID</h3>
+<figure data-type="image" tabindex="4"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200810205349657.png" alt="image-20200810205349657" loading="lazy"></figure>
+<p>Linux中，使用getpid()或者top命令得到的是TGID，它代表进程ID（父线程的pid），真正task_struct中的pid可以使用gettid()或top -H得到，可以看到每个线程的pid。使用top -H 只能看到子线程的pid，看不到父线程的pid。</p>
+<figure data-type="image" tabindex="5"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200810214324956.png" alt="image-20200810214324956" loading="lazy"></figure>
+<h2 id="subreaper与托孤">subreaper与托孤</h2>
+<p>PR_SET_CHILD_SUBREAPER是linux3.4加入的新特性。把它设置为非零值，当前进程就会变成subreaper，就会像1号进程那样收养孤儿进程了。</p>
+<figure data-type="image" tabindex="6"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200810211931943.png" alt="image-20200810211931943" loading="lazy"></figure>
+<p>父进程挂掉，子进程变为孤儿进程，其会被subreaper收养，向上找，找subreaper，直到init</p>
+<figure data-type="image" tabindex="7"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200810212257382.png" alt="image-20200810212257382" loading="lazy"></figure>
+<p><strong>使用pstree看到的中间的init就是subreaper</strong></p>
+<h1 id="进程调度">进程调度</h1>
+<p>吞吐 vs 响应</p>
+<p>吞吐和响应之间的矛盾：</p>
+<ul>
+<li>响应：最小化某任务的响应时间，哪怕以牺牲其他的任务为代价</li>
+<li>吞吐：全局视野，整个系统的workload被最大化处理</li>
+</ul>
+<p>IO消耗型 vs CPU消耗型</p>
+<ul>
+<li>IO消耗型：CPU利用率低，大部分时间在等待IO，它对CPU的消耗较少，更重要的是要及时响应，这样类型的任务可以给将它的时间片化小一些而提高它的调度频率</li>
+<li>CPU消耗型：这样的任务需要较多的CPU资源，可以给其划分较大的时间片，而降低它的调度频率</li>
+</ul>
+<h2 id="o1-调度">O(1) 调度</h2>
+<p>先看图：</p>
+<figure data-type="image" tabindex="8"><img src="https://picb.zhimg.com/80/v2-729fb18fa3ac1e41beff0fcd817c92a6_720w.jpg" alt="img" loading="lazy"></figure>
+<p>看到这里，估计有部分读者已经领会到其中的奥义。2.6 kernel 里有 140 种优先级，所以我们就用长度为 140 的 array 去记录优先级。每个优先级下面用一个 FIFO queue 管理这个优先级下的 process。新来的插到队尾，先进先出。在这种情况下，insert / deletion 都是 O(1)。</p>
+<p>那么，我们怎么找到当前最高优先级下面的可执行的 process 呢？如果从 0 开始一直遍历下去，算法虽然不是 O(N)，但是是跟优先级多寡相关的 O(M)，也不能算作 O(1)。在 2.6 scheduler 里，聪明的先贤们采用 bitarray。它为每种优先级分配一个 bit，如果这个优先级队列下面有 process，那么就对相应的 bit 染色，置为 1，否则置为 0。这样，问题就简化成寻找一个 bitarray 里面最高位是 1 的 bit（left-most bit），这基本上是一条 CPU 指令的事（fls）。</p>
+<p>好，大致的思路齐备，我们来捋一捋完整的步骤：</p>
+<ol>
+<li>在 active bitarray 里，寻找 left-most bit 的位置 x。</li>
+<li>在 active priority array（APA）中，找到对应队列 APA[x]。</li>
+<li>从 APA[x] 中 dequeue 一个 process，dequeue 后，如果 APA[x] 的 queue 为空，那么将 active bitarray 里第 x bit置为 0。</li>
+<li>对于当前执行完的 process，重新计算其 priority，然后 enqueue 到 expired priority array（EPA）相应的队里 EPA[priority]。</li>
+<li>如果 priority 在 expired bitarray 里对应的 bit 为 0，将其置 1。</li>
+<li>如果 active bitarray 全为零，将 active bitarray 和 expired bitarray 交换一下。</li>
+</ol>
+<p>当然，这里面还有一些细节，比如如果是 process 被抢占，其时间片没用完，那么第 4 步，enqueue 回 active priority queue 中。不过这和算法本身没太大关系，我们略过不表。</p>
+<p><strong>历史地位</strong></p>
+<p>2.6 O(1) scheduler 目前已经被性能略输一筹，同时更加强调公平性的 CFS（Completely Fair Scheduler）取代，但其以独特的设计，简单的算法，影响很多系统。在其刚问世时，很多 linux 发行版就迫不及待将其移植回 2.4 kernel。而程序君整个职业生涯中接触过的一些调度器中，都能见到 bitarray + priority queue 的身影。</p>
+<figure data-type="image" tabindex="9"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200813010717364.png" alt="image-20200813010717364" loading="lazy"></figure>
+<h2 id="早期26实时进程调度">早期2.6实时进程调度</h2>
+<ul>
+<li>SCHED_FIFO：不同优先级按照优先级高的先跑到睡眠，低优先级的再跑；同等优先级先进先出</li>
+<li>SCHED_RR：不同优先级按照优先级高的先跑到睡眠，低优先级的再跑；同等优先级轮转</li>
+</ul>
+<h2 id="早期26非实时进程普通进程的调度和动态优先级">早期2.6非实时进程（普通进程）的调度和动态优先级</h2>
+<p>SCHED_NORMAL</p>
+<ul>
+<li>调度在不同进程间轮转</li>
+<li>-20 ~ 19的nice值</li>
+<li>根据睡眠情况，动态奖励与惩罚（睡眠会被奖励，提高得到cpu的概率，运行会被惩罚）<strong>这样IO消耗型就可以抢的过CPU消耗型了</strong></li>
+</ul>
+<p>优先级高的进程可以得到更长的时间片并且可以在醒来时抢占低优先级的进程，之后再和它们一起轮转</p>
+<p>**rt限制：**实时进程都睡眠了，非实时的才可以跑，后来linux打了补丁，实时进程在一个周期内最多占用cpu的比例为95%（可设置）</p>
+<figure data-type="image" tabindex="10"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200810224805315.png" alt="image-20200810224805315" loading="lazy"></figure>
+<h2 id="现有普通进程的调度cfs完全公平调度算法">现有普通进程的调度CFS（完全公平调度算法）</h2>
+<figure data-type="image" tabindex="11"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200810233315094.png" alt="image-20200810233315094" loading="lazy"></figure>
+<figure data-type="image" tabindex="12"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200810233333970.png" alt="image-20200810233333970" loading="lazy"></figure>
+<pre><code>nice值或者说调度与cpu占用率没有绝对的关系：调度只是解决在大家都要使用cpu时，将执行机会给谁的问题；cpu占用率主要由进程所执行的任务决定
+</code></pre>
+<blockquote>
+<p>工具chrt和renice：</p>
+<p>设置SCHED_FIFO和50 RT 优先级：chrt -f -a -p 50  pid</p>
+<p>设置nice：renice -n -5 -g pid             nice  -n   5   ./a.out</p>
+</blockquote>
+<h1 id="负载均衡">负载均衡</h1>
+<figure data-type="image" tabindex="13"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811005816300.png" alt="image-20200811005816300" loading="lazy"></figure>
+<p>设置进程在那个核上运行：</p>
+<ul>
+<li><strong>设置affinity</strong></li>
+</ul>
+<figure data-type="image" tabindex="14"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811000609363.png" alt="image-20200811000609363" loading="lazy"></figure>
+<ul>
+<li><strong>taskset</strong></li>
+</ul>
+<figure data-type="image" tabindex="15"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811000751953.png" alt="image-20200811000751953" loading="lazy"></figure>
+<figure data-type="image" tabindex="16"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811005916918.png" alt="image-20200811005916918" loading="lazy"></figure>
+<figure data-type="image" tabindex="17"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811010116599.png" alt="image-20200811010116599" loading="lazy"></figure>
+<figure data-type="image" tabindex="18"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811005957531.png" alt="image-20200811005957531" loading="lazy"></figure>
+<figure data-type="image" tabindex="19"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811010017183.png" alt="image-20200811010017183" loading="lazy"></figure>
+<figure data-type="image" tabindex="20"><img src="C:%5CUsers%5Cxwq%5CAppData%5CRoaming%5CTypora%5Ctypora-user-images%5Cimage-20200811010253163.png" alt="image-20200811010253163" loading="lazy"></figure>
+<p>不可抢占的时机：中断、软中断、进程上下文的spin_lock，其他都可以抢占</p>
+<p>PREEMPT_RT补丁：</p>
+<ul>
+<li>spin_lock迁移为可调度的mutex，同时报了raw_spinlock_t</li>
+<li>实现优先级继承协议</li>
+<li>中断线程化</li>
+<li>软中断线程化</li>
+</ul>
+<p>这样，系统就几乎变得随处可以抢占，变为一个实时的操作系统</p>
+<p>https://zhuanlan.zhihu.com/p/33461281</p>
+<h1 id="内存管理">内存管理</h1>
+<h2 id="地址">地址</h2>
+
+            </div>
+            
+            
+              <div class="next-post">
+                <div class="next">下一篇</div>
+                <a href="https://weenews.github.io/post/linux-nei-he-xie-yi-zhan-zhi-wang-luo-xin-xi-tong-ji-snmp/">
+                  <h3 class="post-title">
+                    linux内核协议栈之网络信息统计SNMP
+                  </h3>
+                </a>
+              </div>
+            
+
+            
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+<script type="application/javascript">
+
+AOS.init();
+
+var app = new Vue({
+  el: '#app',
+  data: {
+    menuVisible: false,
+  },
+})
+
+</script>
+
+
+
+
+
+
+  </body>
+</html>
